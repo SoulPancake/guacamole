@@ -11,16 +11,17 @@ func pingTask() {
 }
 
 func benchmarkTicker(iterations int) {
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-
+	runtime.GC() // Force garbage collection before starting
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	initialAlloc := m.Alloc
 
 	start := time.Now()
+	tickers := make([]*time.Ticker, 0, iterations) // Keep tickers alive
 
 	for i := 0; i < iterations; i++ {
+		ticker := time.NewTicker(10 * time.Millisecond)
+		tickers = append(tickers, ticker)
 		go func() {
 			for range ticker.C {
 				pingTask()
@@ -34,18 +35,25 @@ func benchmarkTicker(iterations int) {
 	finalAlloc := m.Alloc
 	fmt.Printf("Ticker: %d iterations in %v, Memory Usage: %v MiB\n",
 		iterations, elapsed, (finalAlloc-initialAlloc)/1024/1024)
-}
 
+	// Cleanup tickers
+	for _, t := range tickers {
+		t.Stop()
+	}
+}
 func benchmarkAfterFunc(iterations int) {
+	runtime.GC() // Force garbage collection before starting
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	initialAlloc := m.Alloc
 
 	start := time.Now()
+	done := make(chan struct{}) // Keep goroutines alive
 
 	for i := 0; i < iterations; i++ {
 		time.AfterFunc(10*time.Millisecond, func() {
 			pingTask()
+			done <- struct{}{}
 		})
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -55,8 +63,12 @@ func benchmarkAfterFunc(iterations int) {
 	finalAlloc := m.Alloc
 	fmt.Printf("AfterFunc: %d iterations in %v, Memory Usage: %v MiB\n",
 		iterations, elapsed, (finalAlloc-initialAlloc)/1024/1024)
-}
 
+	// Wait for all goroutines to finish
+	for i := 0; i < iterations; i++ {
+		<-done
+	}
+}
 func benchmarkGoroutines(iterations int) {
 	initialGoroutines := runtime.NumGoroutine()
 

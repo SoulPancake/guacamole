@@ -11,13 +11,13 @@ func pingTask() {
 }
 
 func benchmarkTicker(iterations int) {
-	runtime.GC() // Force garbage collection before starting
+	runtime.GC()
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	initialAlloc := m.Alloc
 
 	start := time.Now()
-	tickers := make([]*time.Ticker, 0, iterations) // Keep tickers alive
+	tickers := make([]*time.Ticker, 0, iterations)
 
 	for i := 0; i < iterations; i++ {
 		ticker := time.NewTicker(10 * time.Millisecond)
@@ -42,7 +42,7 @@ func benchmarkTicker(iterations int) {
 	}
 }
 func benchmarkAfterFunc(iterations int) {
-	runtime.GC() // Force garbage collection before starting
+	runtime.GC()
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	initialAlloc := m.Alloc

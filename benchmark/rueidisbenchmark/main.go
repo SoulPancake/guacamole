@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -19,62 +20,102 @@ func main() {
 	}
 	defer file.Close()
 
-	// Set up the logger to write to the file
-	logger := log.New(file, "", log.LstdFlags)
+	// Set up the logger to write to both the file and the console
+	multiWriter := io.MultiWriter(file, os.Stdout)
+	logger := log.New(multiWriter, "", log.LstdFlags)
 
 	// Start tracking memory usage
 	go trackMemoryUsage(logger)
 
-	// Setup echo server
+	// Setup the HTTP server
+	server := &http.Server{Addr: ":8080"}
+
+	// Setup echo server handler
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Echo: " + r.URL.Path))
 	})
-	go http.ListenAndServe(":8080", nil)
 
+	// Start the server in a goroutine
+	go func() {
+		err := server.ListenAndServe()
+		if err != nil && err != http.ErrServerClosed {
+			logger.Fatalf("Server listen error: %v", err)
+		}
+	}()
+
+	// Run benchmarks sequentially
+	runBenchmarks(logger)
+
+	// After benchmarks are done, gracefully shut down the server
+	shutdownServer(server, logger)
+}
+
+func runBenchmarks(logger *log.Logger) {
 	// Test approach 1: Using time.AfterFunc
-	go benchmarkWithTimeAfterFunc()
+	benchmarkWithTimeAfterFunc(logger)
 
 	// Test approach 2: Using Goroutines with ticker
-	go benchmarkWithGoroutines()
-
-	// Keep the main goroutine alive
-	select {}
+	benchmarkWithGoroutines(logger)
 }
 
-func benchmarkWithTimeAfterFunc() {
-	// Setup time.AfterFunc with 1000 instances, resetting every millisecond
+func benchmarkWithTimeAfterFunc(logger *log.Logger) {
 	var wg sync.WaitGroup
+	qps := 0
+	mu := sync.Mutex{}
+	duration := time.Second
+	timeout := time.After(duration)
+
+	// Limit number of goroutines to be created, avoiding long-running goroutines.
 	for i := 0; i < 1000; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
+			// Trigger QPS count once after a small delay using time.AfterFunc
 			timer := time.AfterFunc(time.Millisecond, func() {
-				// Simulate work
+				mu.Lock()
+				qps++
+				mu.Unlock()
 			})
-			// Reset timer every millisecond
-			for {
-				timer.Reset(time.Millisecond)
-				time.Sleep(time.Millisecond)
+			defer timer.Stop()
+
+			// Ensure the goroutine does not block forever.
+			select {
+			case <-timeout: // After 1 second, exit the goroutine.
+				return
 			}
 		}(i)
 	}
 	wg.Wait()
+	logger.Printf("QPS for benchmarkWithTimeAfterFunc: %d\n", qps)
 }
 
-func benchmarkWithGoroutines() {
-	// Setup ticker with 1000 goroutines waiting every millisecond
-	ticker := time.NewTicker(time.Millisecond)
+func benchmarkWithGoroutines(logger *log.Logger) {
 	var wg sync.WaitGroup
+	qps := 0
+	mu := sync.Mutex{}
+	duration := time.Second
+
 	for i := 0; i < 1000; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
+			ticker := time.NewTicker(time.Millisecond)
+			defer ticker.Stop()
+
+			// Count QPS using 1000 separate tickers
 			for range ticker.C {
-				// Simulate work
+				mu.Lock()
+				qps++
+				mu.Unlock()
+				// Stop after 1 second
+				if time.Since(time.Now()) > duration {
+					return
+				}
 			}
 		}(i)
 	}
 	wg.Wait()
+	logger.Printf("QPS for benchmarkWithGoroutines: %d\n", qps)
 }
 
 func trackMemoryUsage(logger *log.Logger) {
@@ -86,5 +127,15 @@ func trackMemoryUsage(logger *log.Logger) {
 			memStats.Alloc/1024/1024, memStats.HeapAlloc/1024/1024, memStats.HeapSys/1024/1024)
 		// Sleep for a second before checking again
 		time.Sleep(time.Second)
+	}
+}
+
+func shutdownServer(server *http.Server, logger *log.Logger) {
+	// Gracefully shut down the server
+	logger.Println("Shutting down the server after benchmarks.")
+	if err := server.Shutdown(nil); err != nil {
+		logger.Printf("Error shutting down server: %v\n", err)
+	} else {
+		logger.Println("Server successfully shut down.")
 	}
 }

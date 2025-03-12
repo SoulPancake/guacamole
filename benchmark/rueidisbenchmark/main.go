@@ -63,28 +63,33 @@ func benchmarkWithTimeAfterFunc(logger *log.Logger) {
 	qps := 0
 	mu := sync.Mutex{}
 	duration := time.Second
-	timeout := time.After(duration)
+	//timeout := time.After(duration)
 
-	// Limit number of goroutines to be created, avoiding long-running goroutines.
+	// Create 1000 timers with time.AfterFunc in the current goroutine
 	for i := 0; i < 1000; i++ {
 		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			// Trigger QPS count once after a small delay using time.AfterFunc
-			timer := time.AfterFunc(time.Millisecond, func() {
-				mu.Lock()
-				qps++
-				mu.Unlock()
-			})
-			defer timer.Stop()
-
-			// Ensure the goroutine does not block forever.
-			select {
-			case <-timeout: // After 1 second, exit the goroutine.
-				return
-			}
-		}(i)
+		timer := time.AfterFunc(time.Millisecond, func() {
+			mu.Lock()
+			qps++
+			mu.Unlock()
+		})
+		defer timer.Stop()
 	}
+
+	// Measure QPS of the echo server
+	start := time.Now()
+	for time.Since(start) < duration {
+		resp, err := http.Get("http://localhost:8080/")
+		if err != nil {
+			logger.Printf("Error making request: %v", err)
+			continue
+		}
+		resp.Body.Close()
+		mu.Lock()
+		qps++
+		mu.Unlock()
+	}
+
 	wg.Wait()
 	logger.Printf("QPS for benchmarkWithTimeAfterFunc: %d\n", qps)
 }
